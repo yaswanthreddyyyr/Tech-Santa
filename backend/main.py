@@ -3,13 +3,26 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from db import db
-from ai_service import evaluate_problem, generate_audio_summary
+from ai_service import evaluate_problem, generate_audio_summary, get_text_embedding
 from mock_data import MOCK_OPPORTUNITIES
 from datetime import datetime
 import base64
+import math
 import uuid
 
 MOCK_MODE = os.getenv("MOCK_MODE", "False").lower() == "true"
+SIMILARITY_THRESHOLD = 0.85
+
+def cosine_similarity(v1, v2):
+    "Compute cosine similarity between two vectors."
+    if not v1 or not v2 or len(v1) != len(v2):
+        return 0.0
+    dot_product = sum(a * b for a, b in zip(v1, v2))
+    magnitude1 = math.sqrt(sum(a * a for a in v1))
+    magnitude2 = math.sqrt(sum(b * b for b in v2))
+    if magnitude1 == 0 or magnitude2 == 0:
+        return 0.0
+    return dot_product / (magnitude1 * magnitude2)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -28,18 +41,55 @@ class ProblemSubmission(BaseModel):
 
 @app.post("/submit")
 async def submit_problem(submission: ProblemSubmission):
-    # 1. AI Analysis
+    embedding = get_text_embedding(submission.description)
+    database = None
+    
+    if not MOCK_MODE:
+        database = db.get_db()
+        # --- IDEMPOTENCY CHECK START ---
+        # 1. Fetch all problems with embeddings
+        # Optimization: In prod, use Vector Search (Atlas) or FAISS. 
+        # Here we do a linear scan which is fine for <10k items.
+        existing_problems = database.problems.find({"embedding": {"$exists": True}}, {"embedding": 1, "original_text": 1})
+        
+        best_match = None
+        max_score = -1.0
+        
+        for problem in existing_problems:
+            score = cosine_similarity(embedding, problem.get("embedding"))
+            if score > max_score:
+                max_score = score
+                best_match = problem
+        
+        # 2. If Similarity > Threshold, treat as duplicate
+        if max_score > SIMILARITY_THRESHOLD and best_match:
+            print(f"Duplicate found! Score: {max_score} for '{submission.description}' matches '{best_match.get('original_text')}'")
+            database.problems.update_one(
+                {"_id": best_match["_id"]},
+                {"$inc": {"vote_count": 1}}
+            )
+            return {
+                "id": str(best_match["_id"]),
+                "status": "upvoted_existing",
+                "message": "Similar wish already exists! We folded your wish into it.",
+                "similarity_score": max_score
+            }
+        # --- IDEMPOTENCY CHECK END ---
+
+    # 3. AI Analysis (only if new)
     analysis = evaluate_problem(submission.description)
     
-    # 2. Store in DB
+    # 4. Store in DB
     document = {
         "original_text": submission.description,
+        "embedding": embedding,
+        "vote_count": 1,
         "analysis": analysis,
         "created_at": datetime.utcnow(),
         "audio_b64": None
     }
     
-    # 3. Generate Audio only if it's a "Solvable" opportunity
+    # 5. Generate Audio only if it's a "Solvable" opportunity
     if analysis.get("is_public"):
         audio_bytes = generate_audio_summary(analysis.get("summary", "New opportunity available"))
         if audio_bytes:
@@ -49,7 +99,6 @@ async def submit_problem(submission: ProblemSubmission):
         # Simulate ID generation and return immediately
         return {"id": str(uuid.uuid4()), "status": "submitted (mock)", "analysis": analysis}
 
-    database = db.get_db()
     result = database.problems.insert_one(document)
     
     return {"id": str(result.inserted_id), "status": "submitted", "analysis": analysis}
@@ -61,11 +110,15 @@ async def get_opportunities():
 
     database = db.get_db()
     # Fetch only public/solvable problems
-    cursor = database.problems.find({"analysis.is_public": True}).sort("created_at", -1)
+    # Sort by vote_count descending (popular first), then newest
+    cursor = database.problems.find({"analysis.is_public": True}).sort([("vote_count", -1), ("created_at", -1)])
     
     results = []
     for doc in cursor:
         doc["_id"] = str(doc["_id"])
+        # Ensure older records have a visual default
+        if "vote_count" not in doc:
+            doc["vote_count"] = 1
         results.append(doc)
         
     return results

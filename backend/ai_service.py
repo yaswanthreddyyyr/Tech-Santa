@@ -49,6 +49,29 @@ def get_gemini_model():
         logger.error(f"Failed to initialize GenAI: {e}")
         return None
 
+def get_text_embedding(text: str) -> list[float]:
+    """Generates an embedding vector for the given text."""
+    if MOCK_MODE:
+        # Return a mock 768-dim vector
+        return [0.1] * 768
+        
+    if not HAS_GENAI or not GEMINI_API_KEY:
+        logger.warning("Cannot generate embedding: GenAI not configured")
+        return []
+
+    try:
+        genai.configure(api_key=GEMINI_API_KEY)
+        result = genai.embed_content(
+            model="models/embedding-001",
+            content=text,
+            task_type="retrieval_document",
+            title="Wish Embedding"
+        )
+        return result['embedding']
+    except Exception as e:
+        logger.error(f"Failed to generate embedding: {e}")
+        return []
+
 def evaluate_problem(problem_text: str):
     """
     Uses Gemini to classify the problem.
