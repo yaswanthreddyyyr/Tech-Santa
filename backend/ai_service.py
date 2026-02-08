@@ -117,6 +117,7 @@ def evaluate_problem(problem_text: str):
             4. "guidance": If solvable, a short tech stack recommendation. If existing, name the solution.
             5. "reasoning": A short explanation of why you chose this category and how you inferred the problem.
             6. "is_public": Boolean. True ONLY if the category is "Solvable".
+            7. "resources": At last list any relevant web sources of platforms that exist for the given requirement.
             """
             
             response = model.generate_content(prompt)

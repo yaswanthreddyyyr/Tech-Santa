@@ -66,6 +66,18 @@ with tab1:
                             st.info("💡 **Great minds think alike!**")
                             st.write(data.get("message"))
                             st.metric("Similarity Score", f"{int(data.get('similarity_score', 0)*100)}%")
+                            
+                            # Display Resources for duplicate
+                            resources = data.get("resources", [])
+                            if resources:
+                                st.divider()
+                                st.subheader("📚 Relevant Resources")
+                                if isinstance(resources, list):
+                                    for resource in resources:
+                                        st.write(f"• {resource}")
+                                else:
+                                    st.write(resources)
+                            
                             st.caption("We've added your vote to the existing wish.")
                             status.update(label="Duplicate Found", state="complete", expanded=False)
                         else:
@@ -95,6 +107,17 @@ with tab1:
                                 st.info(f"**Status:** {category}")
                                 if analysis.get('reasoning'):
                                     st.write(f"**AI Logic:** {analysis.get('reasoning')}")
+                            
+                            # Display Resources
+                            resources = analysis.get("resources", [])
+                            if resources:
+                                st.divider()
+                                st.subheader("📚 Relevant Resources")
+                                if isinstance(resources, list):
+                                    for resource in resources:
+                                        st.write(f"• {resource}")
+                                else:
+                                    st.write(resources)
                         
                         # Show raw analysis in expander for debugging if needed
                             
@@ -121,7 +144,7 @@ with tab2:
                 # Sort Controls
                 sort_option = st.selectbox(
                     "Sort By",
-                    ["Newest", "Most Liked", "Highest Impact"],
+                    ["Newest", "Highest Impact"],
                     index=0
                 )
 
@@ -146,9 +169,7 @@ with tab2:
                 opportunities = [op for op in opportunities if op.get('metrics', {}).get('difficulty', 'Medium') in selected_diff]
 
             # 2. Apply Sorting
-            if sort_option == "Most Liked":
-                opportunities.sort(key=lambda x: x.get('metrics', {}).get('likes', 0), reverse=True)
-            elif sort_option == "Highest Impact":
+            if sort_option == "Highest Impact":
                 opportunities.sort(key=lambda x: x.get('metrics', {}).get('impact_score', 0), reverse=True)
             else: # Newest
                 # Assuming the list comes sorted by date from backend, or strict parse
@@ -163,7 +184,7 @@ with tab2:
             
             for op in opportunities:
                 analysis = op.get("analysis", {})
-                metrics = op.get("metrics", {"likes": 0, "views": 0, "difficulty": "Medium", "impact_score": 0})
+                metrics = op.get("metrics", {"difficulty": "Medium", "impact_score": 0})
                 
                 with st.container():
                     col1, col2 = st.columns([3, 1])
@@ -172,14 +193,23 @@ with tab2:
                         st.subheader(analysis.get("summary"))
                         
                         # Metrics Row
-                        m1, m2, m3, m4 = st.columns(4)
-                        m1.caption(f"❤️ {metrics.get('likes')} Likes")
-                        m2.caption(f"👀 {metrics.get('views')} Views")
-                        m3.caption(f"⚡ Impact: {metrics.get('impact_score')}/100")
-                        m4.caption(f"🏗️ Diff: {metrics.get('difficulty')}")
+                        m1, m2 = st.columns(2)
+                        m1.caption(f"⚡ Impact: {metrics.get('impact_score')}/100")
+                        m2.caption(f"🏗️ Diff: {metrics.get('difficulty')}")
+
 
                         st.markdown(f"**Industry:** `{analysis.get('industry', 'General')}`")
                         st.markdown(f"> *\"{op.get('original_text')}\"*")
+                        
+                        # Display Resources prominently
+                        resources = analysis.get("resources", [])
+                        if resources:
+                            st.markdown("**📚 Relevant Resources:**")
+                            if isinstance(resources, list):
+                                for resource in resources:
+                                    st.write(f"• {resource}")
+                            else:
+                                st.write(resources)
                         
                         with st.expander("🛠 Technical Guidance"):
                             st.write(analysis.get("guidance"))
