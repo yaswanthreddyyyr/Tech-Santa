@@ -2,9 +2,15 @@ import streamlit as st
 import requests
 import base64
 import os
+import io
+from dotenv import load_dotenv
+
+# Load environment variables from .env file (parent directory)
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 # Configuration
 API_URL = os.getenv("API_URL", "http://localhost:8000")
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 
 st.set_page_config(
     page_title="Problem Solver AI",
@@ -29,6 +35,51 @@ st.markdown("""
 st.title("💡 AI Opportunity Compass")
 st.caption("Transforming real-world pain points into actionable tech opportunities.")
 
+# --- HELPER FUNCTION FOR SPEECH-TO-TEXT ---
+def speech_to_text(audio_input) -> str:
+    """
+    Converts speech audio to text using ElevenLabs API.
+    """
+    if not ELEVENLABS_API_KEY:
+        st.error("ElevenLabs API key not configured")
+        return ""
+    
+    try:
+        # Read the audio bytes from UploadedFile
+        if hasattr(audio_input, 'read'):
+            audio_bytes = audio_input.read()
+        else:
+            audio_bytes = audio_input
+        
+        # Create a BytesIO object for the request
+        audio_file = io.BytesIO(audio_bytes)
+        audio_file.name = "recording.wav"
+        
+        # Call ElevenLabs speech-to-text API
+        url = "https://api.elevenlabs.io/v1/speech-to-text"
+        headers = {
+            "xi-api-key": ELEVENLABS_API_KEY
+        }
+        data = {
+            "model_id": "scribe_v2"
+        }
+        files = {
+            "file": audio_file
+        }
+        
+        response = requests.post(url, headers=headers, data=data, files=files)
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("text", "")
+        else:
+            st.error(f"ElevenLabs error: {response.text}")
+            return ""
+            
+    except Exception as e:
+        st.error(f"Speech-to-text conversion failed: {e}")
+        return ""
+
 # Layout
 tab1, tab2 = st.tabs(["🚀 Submit Problem", "🔍 Explore Opportunities"])
 
@@ -43,6 +94,21 @@ with tab1:
             height=150,
             placeholder="e.g., Farmers in my village struggle to identify crop diseases early..."
         )
+        
+        # Speech-to-text option
+        st.write("**Or** 🎤 Record your problem:")
+        audio_bytes = st.audio_input("Click the microphone to record")
+        
+        if audio_bytes and not description:
+            st.info("Processing audio...")
+            transcribed = speech_to_text(audio_bytes)
+            if transcribed:
+                description = st.text_area(
+                    "Transcribed text (you can edit):",
+                    value=transcribed,
+                    height=150
+                )
+        
         submitted = st.form_submit_button("Analyze & Submit")
         
         if submitted and description:
