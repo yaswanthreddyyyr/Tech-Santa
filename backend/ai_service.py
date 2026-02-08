@@ -86,47 +86,64 @@ def evaluate_problem(problem_text: str):
             "is_public": True
         }
 
-    model = get_gemini_model()
+    # List of models to try in order of preference
+    # We use multiple aliases to increase chances of hitting a working/quota-available model
+    models_to_try = [
+        "models/gemini-2.0-flash", 
+        "models/gemini-2.5-flash", 
+        "models/gemini-1.5-flash", 
+        "models/gemini-flash-latest"
+    ]
     
-    if not model:
-        return {
-            "category": "Error", 
-            "industry": "System",
-            "summary": "AI Service unavailable", 
-            "guidance": "Check server logs", 
-            "reasoning": "The AI model could not be initialized.", 
-            "is_public": False
-        }
+    last_error = None
 
-    try:
-        prompt = f"""
-    Analyze the following user problem: "{problem_text}".
-    
-    Return a strictly valid JSON object (no markdown formatting) with the following keys:
-    1. "category": One of ["Solvable", "Unsolvable", "Spam", "Existing Solution"].
-    2. "industry": A high-level industry tag (e.g., "Healthcare", "Automotive", "FinTech", "Retail", "Education", "General").
-    3. "summary": A 1-sentence summary of the core issue.
-    4. "guidance": If solvable, a short tech stack recommendation. If existing, name the solution.
-    5. "reasoning": A short explanation of why you chose this category.
-    6. "is_public": Boolean. True ONLY if the category is "Solvable".
-    """
-        
-        response = model.generate_content(prompt)
-        
-        text_response = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(text_response)
-        return data
+    for model_name in models_to_try:
+        try:
+            logger.info(f"Attempting AI analysis with model: {model_name}")
+            model = genai.GenerativeModel(model_name)
             
-    except Exception as e:
-        logger.error(f"AI Processing failed: {e}")
-        return {
-            "category": "Unprocessed", 
-            "industry": "Unknown",
-            "summary": "AI could not process", 
-            "guidance": "Check manually", 
-            "reasoning": str(e),
-            "is_public": False
-        }
+            prompt = f"""
+            Analyze the following user input: "{problem_text}".
+
+            **Crucial Instruction: Infer Intent deeply.**
+            - Users often express problems as sentiments ("I hate standing in line" -> Problem: Queues are inefficient).
+            - Users often express wishes as affection for non-existent things ("I love flying bikes" -> Problem: Personal aerial transport doesn't exist yet). Deduce the missing product.
+            - Do NOT dismiss an input just because it says "I love..." or "I hate...". Translate it into a technical or product challenge.
+            
+            Return a strictly valid JSON object (no markdown formatting) with the following keys:
+            1. "category": One of ["Solvable", "Unsolvable", "Spam", "Existing Solution"].
+            2. "industry": A high-level industry tag (e.g., "Healthcare", "Automotive", "FinTech", "Retail", "Education", "General").
+            3. "summary": A 1-sentence summary of the *inferred* problem or desire.
+            4. "guidance": If solvable, a short tech stack recommendation. If existing, name the solution.
+            5. "reasoning": A short explanation of why you chose this category and how you inferred the problem.
+            6. "is_public": Boolean. True ONLY if the category is "Solvable".
+            """
+            
+            response = model.generate_content(prompt)
+            
+            text_response = response.text.replace("```json", "").replace("```", "").strip()
+            data = json.loads(text_response)
+            
+            # If successful, return immediately
+            logger.info(f"Success with model: {model_name}")
+            return data
+            
+        except Exception as e:
+            logger.warning(f"Model {model_name} failed: {e}")
+            last_error = e
+            # Continue to next model in the list
+            continue
+            
+    # If all models fail
+    logger.error(f"All AI models failed. Last error: {last_error}")
+    return {
+        "category": "Unprocessed", 
+        "industry": "Unknown",
+        "summary": "AI could not process", 
+        "guidance": "Check manually", 
+        "reasoning": str(last_error),
+        "is_public": False
+    }
 
 def generate_audio_summary(text: str):
     """

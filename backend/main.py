@@ -11,7 +11,39 @@ import math
 import uuid
 
 MOCK_MODE = os.getenv("MOCK_MODE", "False").lower() == "true"
-SIMILARITY_THRESHOLD = 0.85
+SIMILARITY_THRESHOLD = 0.85 # Preliminary filter
+CONFIRMATION_THRESHOLD = 0.96 # Auto-confirm if extremely high
+
+def check_semantic_duplicate(new_text, candidate_text):
+    """
+    Uses LLM to verify if two texts mean the same thing.
+    Returns True if they are semantic duplicates.
+    """
+    if MOCK_MODE: return False
+    
+    # Quick string match
+    if new_text.strip().lower() == candidate_text.strip().lower():
+        return True
+
+    from ai_service import get_gemini_model
+    try:
+        model = get_gemini_model()
+        prompt = f"""
+        Task: Determine if these two user wishes are fundamentally the same request.
+        
+        Wish A: "{new_text}"
+        Wish B: "{candidate_text}"
+        
+        Answer strictly "YES" or "NO".
+        YES = They differ only in phrasing but ask for the exact same core solution.
+        NO = They ask for different things, or one is a sub-category of the other.
+        """
+        response = model.generate_content(prompt)
+        answer = response.text.upper().strip()
+        return "YES" in answer
+    except Exception as e:
+        print(f"LLM Duplicate Check Failed: {e}")
+        return False
 
 def cosine_similarity(v1, v2):
     "Compute cosine similarity between two vectors."
@@ -63,17 +95,33 @@ async def submit_problem(submission: ProblemSubmission):
         
         # 2. If Similarity > Threshold, treat as duplicate
         if max_score > SIMILARITY_THRESHOLD and best_match:
-            print(f"Duplicate found! Score: {max_score} for '{submission.description}' matches '{best_match.get('original_text')}'")
-            database.problems.update_one(
-                {"_id": best_match["_id"]},
-                {"$inc": {"vote_count": 1}}
-            )
-            return {
-                "id": str(best_match["_id"]),
-                "status": "upvoted_existing",
-                "message": "Similar wish already exists! We folded your wish into it.",
-                "similarity_score": max_score
-            }
+            is_dupe = False
+            
+            # Case A: Extremely high vector similarity (nearly identical text)
+            if max_score > CONFIRMATION_THRESHOLD:
+                is_dupe = True
+                print(f"Auto-Duplicate (Score: {max_score})")
+            
+            # Case B: High embedding match but requires LLM verification
+            else:
+                print(f"Potential Duplicate (Score: {max_score}). Verifying with LLM...")
+                is_dupe = check_semantic_duplicate(submission.description, best_match.get("original_text"))
+                
+            if is_dupe:
+                print(f"Confirmed Duplicate! '{submission.description}' == '{best_match.get('original_text')}'")
+                database.problems.update_one(
+                    {"_id": best_match["_id"]},
+                    {"$inc": {"vote_count": 1}}
+                )
+                return {
+                    "id": str(best_match["_id"]),
+                    "status": "upvoted_existing",
+                    "message": "Similar wish already exists! We folded your wish into it.",
+                    "similarity_score": max_score
+                }
+            else:
+                print(f"False Positive detected. Score: {max_score} but LLM said NO.")
+                
         # --- IDEMPOTENCY CHECK END ---
 
     # 3. AI Analysis (only if new)

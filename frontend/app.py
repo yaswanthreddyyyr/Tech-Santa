@@ -46,27 +46,57 @@ with tab1:
         submitted = st.form_submit_button("Analyze & Submit")
         
         if submitted and description:
-            with st.spinner("Consulting the AI Oracle..."):
+            # Custom spinner with more personality
+            with st.status("🎅 Tech Santa is analyzing...", expanded=True) as status:
                 try:
+                    status.write("🧠 Understanding the problem context...")
+                    # Simulating thinking time if backend is instantaneous (optional)
+                    
+                    status.write("🔍 Search for existing solutions...")
                     response = requests.post(f"{API_URL}/submit", json={"description": description})
+                    
                     if response.status_code == 200:
+                        status.write("✅ Analysis complete!")
+                        status.update(label="Analysis Done", state="complete", expanded=False)
+                        
                         data = response.json()
-                        analysis = data.get("analysis", {})
                         
-                        # Result Display
-                        category = analysis.get('category', 'Unknown')
-                        color_class = "solvable" if category == "Solvable" else "unsolvable"
-                        
-                        st.markdown(f"### Result: <span class='category-badge {color_class}'>{category}</span>", unsafe_allow_html=True)
-                        
-                        if category == "Solvable":
-                            st.success(f"**Opportunity Found!**")
-                            st.info(f"**Guidance:** {analysis.get('guidance')}")
+                        # Handle duplicate/similar wishes gracefully
+                        if data.get("status") == "upvoted_existing":
+                            st.info("💡 **Great minds think alike!**")
+                            st.write(data.get("message"))
+                            st.metric("Similarity Score", f"{int(data.get('similarity_score', 0)*100)}%")
+                            st.caption("We've added your vote to the existing wish.")
+                            status.update(label="Duplicate Found", state="complete", expanded=False)
                         else:
-                            st.warning(f"**Status:** {category}")
+                            analysis = data.get("analysis", {})
+                            
+                            # Result Display
+                            category = analysis.get('category', 'Unknown')
+                            status_color = {
+                                "Solvable": "solvable",
+                                "Existing Solution": "unsolvable", # Reusing red style for now
+                                "Unsolvable": "unsolvable", 
+                                "Spam": "unsolvable"
+                            }.get(category, "unsolvable")
+                            
+                            st.markdown(f"### Result: <span class='category-badge {status_color}'>{category}</span>", unsafe_allow_html=True)
+                            
+                            if category == "Solvable":
+                                st.success(f"**Opportunity Found!**")
+                                st.info(f"**Guidance:** {analysis.get('guidance')}")
+                            elif category == "Existing Solution":
+                                st.warning(f"**Solution Exists**")
+                                st.info(f"**Check this out:** {analysis.get('guidance')}")
+                            elif category == "Unsolvable":
+                                st.error(f"**Not a Software Problem**")
+                                st.write(f"**Reason:** {analysis.get('reasoning')}")
+                            else:
+                                st.info(f"**Status:** {category}")
+                                if analysis.get('reasoning'):
+                                    st.write(f"**AI Logic:** {analysis.get('reasoning')}")
                         
-                        with st.expander("Why this category?"):
-                            st.write(analysis.get("reasoning"))
+                        # Show raw analysis in expander for debugging if needed
                             
                     else:
                         st.error(f"Error: {response.text}")
